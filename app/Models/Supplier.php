@@ -9,7 +9,13 @@ class Supplier extends Model
 {
     use HasFactory;
 
-    protected $guarded = ['id'];
+    protected $fillable = [
+        'nama_supplier',
+        'sales_person',
+        'no_wa',
+        'alamat',
+        'keterangan',
+    ];
 
     // Relasi ke tabel pembelian (jika nanti dibutuhkan)
     public function pembelians()

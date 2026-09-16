@@ -9,7 +9,14 @@ class Pembelian extends Model
 {
     use HasFactory;
 
-    protected $guarded = ['id'];
+    protected $fillable = [
+        'kode_po',
+        'supplier_id',
+        'tanggal_pembelian',
+        'total_biaya',
+        'status_pembayaran',
+        'catatan',
+    ];
 
     // Relasi ke Supplier
     public function supplier()

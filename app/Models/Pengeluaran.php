@@ -9,5 +9,10 @@ class Pengeluaran extends Model
 {
     use HasFactory;
 
-    protected $guarded = ['id'];
+    protected $fillable = [
+        'tanggal_pengeluaran',
+        'kategori',
+        'jumlah_biaya',
+        'keterangan',
+    ];
 }

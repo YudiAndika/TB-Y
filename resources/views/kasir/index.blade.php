@@ -39,9 +39,16 @@
                     <div class="mb-3">
                         <select name="barang_id" class="form-select">
                             <option value="">Cari Nama Barang...</option>
+                            @php
+                                $keranjangSekarang = session('keranjang', []);
+                            @endphp
                             @foreach($barangs as $b)
-                                <option value="{{ $b->id }}">
-                                    {{ $b->nama_barang }} (Stok: {{ $b->stok }}) - Rp {{ number_format($b->harga_jual, 0, ',', '.') }}
+                                @php
+                                    $qtyDiKeranjang = isset($keranjangSekarang[$b->id]) ? $keranjangSekarang[$b->id]['jumlah'] : 0;
+                                    $sisaStok = $b->stok - $qtyDiKeranjang;
+                                @endphp
+                                <option value="{{ $b->id }}" {{ $sisaStok <= 0 ? 'disabled' : '' }}>
+                                    {{ $b->nama_barang }} (Sisa: {{ $sisaStok }}) - Rp {{ number_format($b->harga_jual, 0, ',', '.') }}{{ $sisaStok <= 0 ? ' [HABIS DI KERANJANG]' : '' }}
                                 </option>
                             @endforeach
                         </select>
@@ -105,7 +112,12 @@
 
                                             <td class="text-primary fw-bold">Rp {{ number_format($item['total'], 0, ',', '.') }}</td>
                                             <td class="text-center">
-                                                <a href="/kasir/hapus/{{ $id }}" class="text-danger fs-5" title="Hapus"><i class="bi bi-x-circle-fill"></i></a>
+                                                <form action="/kasir/hapus/{{ $id }}" method="POST" class="d-inline">
+                                                    @csrf
+                                                    <button type="submit" class="btn btn-link text-danger fs-5 p-0 border-0" title="Hapus dari Keranjang">
+                                                        <i class="bi bi-x-circle-fill"></i>
+                                                    </button>
+                                                </form>
                                             </td>
                                         </tr>
                                     @endforeach
@@ -183,7 +195,8 @@
                                 </div>
                                 <div class="col-12 col-md-6">
                                     <label class="form-label small fw-semibold">Nominal Bayar (Rp)</label>
-                                    <input type="number" name="uang_bayar_kedua" id="uangBayarKedua" class="form-control form-control-sm" placeholder="0" value="0">
+                                    <input type="text" id="uangBayarKeduaDisplay" class="form-control form-control-sm" placeholder="0" autocomplete="off" inputmode="numeric">
+                                    <input type="hidden" name="uang_bayar_kedua" id="uangBayarKedua" value="0">
                                 </div>
                             </div>
                         </div>
@@ -192,7 +205,8 @@
                         <div class="row g-3 mb-3">
                             <div class="col-12 col-md-6">
                                 <label class="form-label fw-semibold small">Uang Pelanggan (Rp)</label>
-                                <input type="number" name="uang_bayar" id="uangBayar" class="form-control form-control-lg fw-bold text-success fs-5" min="0" placeholder="0" value="0">
+                                <input type="text" id="uangBayarDisplay" class="form-control form-control-lg fw-bold text-success fs-5" placeholder="0" autocomplete="off" inputmode="numeric">
+                                <input type="hidden" name="uang_bayar" id="uangBayar" value="0">
                             </div>
                             <div class="col-12 col-md-6">
                                 <label class="form-label fw-semibold small">Kembalian / Kurang</label>
@@ -271,11 +285,15 @@
         </div>
     </div>
 
-    <!-- Script Hitung Kembalian & Toggle Split Bill (SAMA SEPERTI ASLINYA) -->
+    <!-- Script Hitung Kembalian & Toggle Split Bill (Format Titik Ribuan & Otomatis Bersihkan Angka 0) -->
     <script>
+        let hitungTotalBayar = function() {};
+
         function toggleSplitBill() {
             const formSplit = document.getElementById('formSplitBill');
             const btnSplit = document.getElementById('btnToggleSplit');
+            const inputKeduaHidden = document.getElementById('uangBayarKedua');
+            const inputKeduaDisplay = document.getElementById('uangBayarKeduaDisplay');
             
             if (formSplit.classList.contains('d-none')) {
                 formSplit.classList.remove('d-none');
@@ -284,50 +302,104 @@
                 btnSplit.classList.add('btn-outline-danger');
             } else {
                 formSplit.classList.add('d-none');
-                document.getElementById('uangBayarKedua').value = '0';
-                btnSplit.innerHTML = '<i class="bi bi-plus-circle me-1"></i> + Gunakan 2 Metode Pembayaran (Split Bill)';
+                if (inputKeduaHidden) inputKeduaHidden.value = '0';
+                if (inputKeduaDisplay) inputKeduaDisplay.value = '';
+                btnSplit.innerHTML = '<i class="bi bi-plus-circle me-1"></i> + Gunakan 2 Metode (Split Bill)';
                 btnSplit.classList.remove('btn-outline-danger');
                 btnSplit.classList.add('btn-outline-secondary');
+                hitungTotalBayar();
             }
         }
 
         document.addEventListener('DOMContentLoaded', function() {
-            const inputBayar = document.getElementById('uangBayar');
+            const inputBayarHidden = document.getElementById('uangBayar');
+            const inputBayarDisplay = document.getElementById('uangBayarDisplay');
+            const inputKeduaHidden = document.getElementById('uangBayarKedua');
+            const inputKeduaDisplay = document.getElementById('uangBayarKeduaDisplay');
             const inputKembalian = document.getElementById('uangKembalian');
             const totalTagihan = document.getElementById('totalTagihan');
             const metodePembayaran = document.getElementById('metode_pembayaran'); 
-            
-            if(inputBayar && totalTagihan) {
-                const total = parseInt(totalTagihan.getAttribute('data-total'));
-                
-                if(metodePembayaran) {
-                    metodePembayaran.addEventListener('change', function() {
-                        if(this.value === 'Transfer' || this.value === 'QRIS') {
-                            inputBayar.value = total;
-                            const event = new Event('keyup');
-                            inputBayar.dispatchEvent(event);
-                        } else {
-                            inputBayar.value = '0'; 
-                            inputKembalian.value = 'Rp 0';
+
+            if (inputBayarDisplay && totalTagihan) {
+                const total = parseInt(totalTagihan.getAttribute('data-total')) || 0;
+
+                function formatRibuan(angka) {
+                    return new Intl.NumberFormat('id-ID').format(angka);
+                }
+
+                function setupMoneyMask(displayInput, hiddenInput) {
+                    if (!displayInput || !hiddenInput) return;
+
+                    // 1. Saat diklik / fokus: Otomatis pilih semua teks, jika bernilai '0' langsung kosongkan
+                    displayInput.addEventListener('focus', function() {
+                        if (this.value === '0' || this.value === '') {
+                            this.value = '';
+                        }
+                        this.select();
+                    });
+
+                    // 2. Saat mengetik: Berikan titik otomatis pemisah ribuan
+                    displayInput.addEventListener('input', function() {
+                        let raw = this.value.replace(/\D/g, ''); // Hapus semua selain angka
+                        let numeric = raw ? parseInt(raw, 10) : 0;
+                        
+                        hiddenInput.value = numeric;
+                        this.value = numeric > 0 ? formatRibuan(numeric) : '';
+
+                        hitungKembalian();
+                    });
+
+                    // 3. Saat keluar kolom input (blur): Jika kosong, kembalikan ke 0
+                    displayInput.addEventListener('blur', function() {
+                        if (this.value.trim() === '') {
+                            hiddenInput.value = '0';
+                            this.value = '0';
+                            hitungKembalian();
                         }
                     });
                 }
 
-                inputBayar.addEventListener('keyup', function() {
-                    const bayar = parseInt(this.value) || 0;
-                    const kembali = bayar - total;
-                    
-                    if(kembali >= 0) {
-                        inputKembalian.value = 'Kembali: Rp ' + new Intl.NumberFormat('id-ID').format(kembali);
+                setupMoneyMask(inputBayarDisplay, inputBayarHidden);
+                setupMoneyMask(inputKeduaDisplay, inputKeduaHidden);
+
+                function hitungKembalian() {
+                    const bayar1 = parseInt(inputBayarHidden ? inputBayarHidden.value : 0) || 0;
+                    const bayar2 = parseInt(inputKeduaHidden ? inputKeduaHidden.value : 0) || 0;
+                    const totalUangMasuk = bayar1 + bayar2;
+                    const selisih = totalUangMasuk - total;
+
+                    if (selisih >= 0) {
+                        inputKembalian.value = 'Kembali: Rp ' + formatRibuan(selisih);
                         inputKembalian.classList.remove('text-danger');
                         inputKembalian.classList.add('text-success');
                     } else {
-                        const sisaTagihan = Math.abs(kembali); 
-                        inputKembalian.value = 'Kurang: Rp ' + new Intl.NumberFormat('id-ID').format(sisaTagihan);
+                        const kurang = Math.abs(selisih);
+                        inputKembalian.value = 'Kurang: Rp ' + formatRibuan(kurang);
                         inputKembalian.classList.remove('text-success');
                         inputKembalian.classList.add('text-danger');
                     }
-                });
+                }
+
+                hitungTotalBayar = hitungKembalian;
+
+                if (metodePembayaran) {
+                    metodePembayaran.addEventListener('change', function() {
+                        if (this.value === 'Transfer' || this.value === 'QRIS') {
+                            inputBayarHidden.value = total;
+                            inputBayarDisplay.value = formatRibuan(total);
+                            hitungKembalian();
+                        } else {
+                            inputBayarHidden.value = '0';
+                            inputBayarDisplay.value = '0';
+                            hitungKembalian();
+                        }
+                    });
+                }
+
+                // Inisialisasi awal
+                inputBayarDisplay.value = '0';
+                inputBayarHidden.value = '0';
+                hitungKembalian();
             }
         });
     </script>

@@ -9,13 +9,13 @@ class Barang extends Model
 {
     use HasFactory;
 
-    // Tambahkan 'kategori' ke dalam daftar ini
     protected $fillable = [
         'nama_barang',
         'barcode',
-        'kategori', // <--- INI YANG TADI KETINGGALAN
+        'kategori',
         'harga_beli',
         'harga_jual',
-        'stok'
+        'stok',
+        'diskon',
     ];
 }

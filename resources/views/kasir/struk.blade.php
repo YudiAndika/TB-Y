@@ -3,120 +3,188 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Struk Pembayaran</title>
+    <title>Struk - {{ $kode }}</title>
     <style>
-        /* 1. RESET HALAMAN (Tanpa size: auto) */
-        @page {
-            margin: 0;
-            padding: 0;
-            /* Jangan gunakan 'size: 80mm auto;' di sini agar driver Windows yang mengambil kendali pemotongan */
-        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
 
-        /* 2. AREA CETAK UTAMA */
-        html, body {
-            margin: 0;
-            padding: 0;
-            width: 76mm; /* Lebar aman fisik (dikurangi margin mekanik printer) */
-            font-family: 'Courier New', Courier, monospace;
-            font-size: 12px;
-            line-height: 1.2;
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif, monospace;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.35;
             color: #000;
             background: #fff;
+            -webkit-print-color-adjust: exact;
         }
 
-        .container {
-            width: 100%;
-            padding: 2mm 2mm 0 2mm;
-            box-sizing: border-box;
-            /* Memastikan printer berhenti membaca elemen setelah div ini selesai */
-            overflow: hidden; 
+        .struk-wrap {
+            width: 72mm;
+            max-width: 100%;
+            margin: 0 auto;
+            padding: 2mm 1mm;
         }
 
-        /* 3. STYLING ELEMEN */
         .text-center { text-align: center; }
         .text-right { text-align: right; }
-        .line { border-bottom: 1px dashed #000; margin: 4px 0; }
+        .bold { font-weight: 800; }
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
+        .divider {
+            border: none;
+            border-top: 1.5px dashed #000;
+            margin: 4px 0;
         }
 
-        td {
+        .tbl-items, .tbl-summary {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+
+        .tbl-items td, .tbl-summary td {
             vertical-align: top;
             padding: 2px 0;
+            word-wrap: break-word;
+        }
+
+        .tbl-items .col-desc  { width: 60%; font-weight: 600; }
+        .tbl-items .col-price { width: 40%; text-align: right; font-weight: 600; }
+
+        .tbl-summary .col-label { width: 40%; font-weight: 600; }
+        .tbl-summary .col-value { width: 60%; text-align: right; font-weight: 600; }
+
+        /* Jarak sobek kertas dihemat jadi 10mm agar tidak terbuang banyak tapi aman dari pisau */
+        .paper-feed { height: 10mm; }
+
+        /* Tombol hanya di layar, hilang saat print */
+        .btn-area { text-align: center; padding: 10px; }
+        .btn-print { background:#1e1b4b; color:#fff; border:none; padding:8px 18px; font-size:13px; font-family:sans-serif; border-radius:5px; cursor:pointer; margin:2px; }
+        .btn-close  { background:#6b7280; color:#fff; border:none; padding:8px 18px; font-size:13px; font-family:sans-serif; border-radius:5px; cursor:pointer; margin:2px; }
+
+        @media print {
+            .btn-area { display: none !important; }
+            html, body {
+                width: 100%;
+                margin: 0 !important;
+                padding: 0 !important;
+                background: #fff !important;
+            }
+            .struk-wrap {
+                width: 72mm !important;
+                max-width: 72mm !important;
+                margin: 0 auto !important;
+                padding: 2mm 2mm !important;
+            }
+            @page {
+                margin: 0;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <!-- HEADER -->
+
+    <div class="btn-area">
+        <button class="btn-print" onclick="window.print()">🖨️ Cetak Ulang</button>
+        <button class="btn-close" onclick="window.close()">✕ Tutup</button>
+    </div>
+
+    <div class="struk-wrap">
+
+        {{-- HEADER --}}
         <div class="text-center">
-            <strong>TB DUTA PRATAMA</strong><br>
-            Jl. KH Umar No. 38, Cileungsi<br>
-            Telp: 0812-3456-7890
+            <div class="bold" style="font-size: 14px;">TB DUTA PRATAMA</div>
+            <div>Jl. KH Umar No. 38, Cileungsi</div>
+            <div>Telp: 0812-3456-7890</div>
         </div>
-        
-        <div class="line"></div>
 
-        <!-- METADATA -->
+        <hr class="divider">
+
+        {{-- METADATA --}}
         <div>
-            Nota: {{ $transaksi->no_nota ?? 'INV-20260912' }}<br>
-            Tgl : {{ date('d-m-Y H:i') }}<br>
-            Pelanggan: {{ $transaksi->pelanggan ?? 'dadas' }}
+            <div>Nota  : {{ $kode }}</div>
+            <div>Tgl   : {{ isset($transaksi) && $transaksi->created_at ? $transaksi->created_at->format('d-m-Y H:i') : date('d-m-Y H:i') }}</div>
+            <div>Plg   : {{ $transaksi->nama_pelanggan ?? 'Umum' }}</div>
+            <div>Kasir : {{ auth()->user()->name ?? 'Kasir' }}</div>
         </div>
 
-        <div class="line"></div>
+        <hr class="divider">
 
-        <!-- ITEM BARANG -->
-        <table>
-            @foreach($items ?? [] as $item)
+        {{-- DAFTAR BARANG --}}
+        <table class="tbl-items">
+            @foreach($penjualans as $item)
+            @php
+                $namaBarang  = $item->barang->nama_barang ?? 'Barang Dihapus';
+                $hargaSatuan = $item->barang
+                    ? $item->barang->harga_jual
+                    : ($item->jumlah > 0 ? round($item->total_harga / $item->jumlah) : $item->total_harga);
+            @endphp
             <tr>
-                <td colspan="2"><strong>{{ $item->nama_barang ?? 'Nama Barang Contoh' }}</strong></td>
+                <td colspan="2" class="bold">{{ $namaBarang }}</td>
             </tr>
             <tr>
-                <td>{{ $item->qty ?? 1 }}x @ {{ number_format($item->harga ?? 100000) }}</td>
-                <td class="text-right">{{ number_format($item->subtotal ?? 100000) }}</td>
+                <td class="col-desc">
+                    {{ $item->jumlah }} x {{ number_format($hargaSatuan, 0, ',', '.') }}
+                    @if(!empty($item->diskon) && $item->diskon > 0)
+                        <br><small>(Disc: -Rp {{ number_format($item->diskon, 0, ',', '.') }})</small>
+                    @endif
+                </td>
+                <td class="col-price">{{ number_format($item->total_harga, 0, ',', '.') }}</td>
             </tr>
             @endforeach
         </table>
 
-        <div class="line"></div>
+        <hr class="divider">
 
-        <!-- TOTAL & METODE BAYAR -->
-        <table>
+        {{-- RINGKASAN PEMBAYARAN --}}
+        <table class="tbl-summary">
             <tr>
-                <td><strong>TOTAL</strong></td>
-                <td class="text-right"><strong>Rp {{ number_format($total ?? 306000) }}</strong></td>
+                <td class="col-label bold">TOTAL</td>
+                <td class="col-value bold">Rp {{ number_format($totalBelanja, 0, ',', '.') }}</td>
             </tr>
             <tr>
-                <td>Metode</td>
-                <td class="text-right">QRIS</td>
+                <td class="col-label">Metode</td>
+                <td class="col-value">{{ $transaksi->metode_pembayaran ?? 'Tunai' }}</td>
             </tr>
             <tr>
-                <td>Bayar</td>
-                <td class="text-right">Rp {{ number_format($bayar ?? 306000) }}</td>
+                <td class="col-label">Bayar</td>
+                <td class="col-value">Rp {{ number_format($transaksi->uang_bayar ?? $totalBelanja, 0, ',', '.') }}</td>
             </tr>
+            @if(isset($transaksi->sisa_piutang) && $transaksi->sisa_piutang > 0)
             <tr>
-                <td>Kembali</td>
-                <td class="text-right">Rp 0</td>
+                <td class="col-label bold">PIUTANG</td>
+                <td class="col-value bold">Rp {{ number_format($transaksi->sisa_piutang, 0, ',', '.') }}</td>
             </tr>
+            @elseif(($transaksi->uang_kembali ?? 0) > 0)
+            <tr>
+                <td class="col-label">Kembali</td>
+                <td class="col-value">Rp {{ number_format($transaksi->uang_kembali, 0, ',', '.') }}</td>
+            </tr>
+            @endif
         </table>
 
-        <div class="line"></div>
+        <hr class="divider">
 
-        <!-- FOOTER (Data Selesai) -->
-        <div class="text-center" style="margin-top: 5px; margin-bottom: 5mm;">
-            Terima Kasih<br>
-            Barang yang sudah dibeli<br>
-            tidak dapat ditukar/dikembalikan
+        {{-- FOOTER --}}
+        <div class="text-center" style="margin-top: 4px; font-size: 11px;">
+            <div>Terima kasih atas kunjungan Anda!</div>
+            <div>Barang yang sudah dibeli</div>
+            <div>tidak dapat ditukar/dikembalikan.</div>
         </div>
+
+        <div class="paper-feed"></div>
+
     </div>
 
     <script>
-        window.onload = function() {
-            window.print();
-        }
+        window.onload = function () {
+            if (!sessionStorage.getItem('sudah_print')) {
+                sessionStorage.setItem('sudah_print', '1');
+                window.print();
+            }
+        };
+        window.addEventListener('afterprint', function () {
+            sessionStorage.removeItem('sudah_print');
+        });
     </script>
+
 </body>
 </html>

@@ -9,7 +9,13 @@ class PembelianDetail extends Model
 {
     use HasFactory;
 
-    protected $guarded = ['id'];
+    protected $fillable = [
+        'pembelian_id',
+        'barang_id',
+        'jumlah',
+        'harga_beli',
+        'subtotal',
+    ];
 
     // Relasi ke Master Barang
     public function barang()

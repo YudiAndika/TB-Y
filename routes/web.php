@@ -7,7 +7,7 @@ use App\Http\Controllers\BarangController;
 use App\Http\Controllers\LaporanController;
 use App\Http\Controllers\PenjualanController;
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\PiutangController;
+
 use App\Models\AuditLog;
 use App\Http\Controllers\PelangganController;
 
@@ -58,7 +58,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
         Route::post('/kasir/add-cart', [PenjualanController::class, 'addCart']);
 
-        Route::get('/kasir/hapus/{id}', [PenjualanController::class, 'hapusCart']);
+        Route::post('/kasir/hapus/{id}', [PenjualanController::class, 'hapusCart']);
 
         Route::post('/kasir/bayar', [PenjualanController::class, 'prosesBayar']);
 

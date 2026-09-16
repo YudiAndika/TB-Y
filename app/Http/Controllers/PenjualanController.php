@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use App\Models\AuditLog;
 use App\Models\HoldCart;
+use Illuminate\Support\Facades\DB;
 
 class PenjualanController extends Controller
 {
@@ -41,11 +42,14 @@ class PenjualanController extends Controller
             return redirect()->back()->with('error', 'Silakan scan barcode atau pilih barang manual!');
         }
 
-        if ($barang->stok < $request->jumlah) {
-            return redirect()->back()->with('error', 'Stok ' . $barang->nama_barang . ' tidak cukup!');
-        }
-
         $keranjang = session()->get('keranjang', []);
+        $qtyDiKeranjang = isset($keranjang[$barang->id]) ? $keranjang[$barang->id]['jumlah'] : 0;
+        $totalDiminta = $qtyDiKeranjang + $request->jumlah;
+
+        if ($barang->stok < $totalDiminta) {
+            $sisaBisaDitambah = max(0, $barang->stok - $qtyDiKeranjang);
+            return redirect()->back()->with('error', 'Stok ' . $barang->nama_barang . ' tidak cukup! Stok gudang: ' . $barang->stok . ', sudah di keranjang: ' . $qtyDiKeranjang . ', sisa yang bisa diambil: ' . $sisaBisaDitambah);
+        }
 
         if (isset($keranjang[$barang->id])) {
             $keranjang[$barang->id]['jumlah'] += $request->jumlah;
@@ -110,7 +114,7 @@ class PenjualanController extends Controller
             return redirect()->back()->with('error', 'Keranjang belanja masih kosong!');
         }
 
-        // --- TAMBAHAN VALIDASI SPLIT BILL ---
+        // --- VALIDASI SPLIT BILL ---
         $request->validate([
             'uang_bayar' => 'required|numeric|min:0',
             'nama_pelanggan' => 'required|string|max:255',
@@ -123,54 +127,72 @@ class PenjualanController extends Controller
 
         $totalBelanja = array_sum(array_column($keranjang, 'total'));
         $kodeTransaksi = 'INV-' . date('Ymd') . '-' . strtoupper(Str::random(5));
-        
+
         $uangBayar1 = $request->uang_bayar ?? 0;
         $uangBayar2 = $request->uang_bayar_kedua ?? 0;
-        
+
         // Gabungkan total uang yang dibayar dari metode 1 dan metode 2 (Split Bill)
         $totalUangDibayar = $uangBayar1 + $uangBayar2;
-        
+
         // Gabungkan string metode pembayaran jika menggunakan 2 metode
         $metodeFinal = $request->metode_pembayaran;
         if ($uangBayar2 > 0 && !empty($request->metode_kedua)) {
             $metodeFinal = $request->metode_pembayaran . ' & ' . $request->metode_kedua;
         }
-        
+
         // Logika Piutang, Lunas, atau Kembalian Berdasarkan Total Gabungan
         if ($totalUangDibayar >= $totalBelanja) {
             $uangKembali = $totalUangDibayar - $totalBelanja;
             $sisaPiutang = 0;
         } else {
             $uangKembali = 0;
-            $sisaPiutang = $totalBelanja - $totalUangDibayar; 
+            $sisaPiutang = $totalBelanja - $totalUangDibayar;
         }
 
-        foreach ($keranjang as $id => $item) {
-            $barang = Barang::find($id);
-            if ($barang && $barang->stok >= $item['jumlah']) {
+        // ---> BUNGKUS SEMUA OPERASI DATABASE DALAM TRANSACTION <---
+        // Jika ada error di tengah proses (misal barang ke-3 gagal),
+        // semua perubahan (stok & penjualan) otomatis di-rollback.
+        DB::beginTransaction();
+        try {
+            foreach ($keranjang as $id => $item) {
+                $barang = Barang::find($id);
+
+                // Validasi stok sekali lagi saat proses bayar (double check)
+                if (!$barang || $barang->stok < $item['jumlah']) {
+                    DB::rollBack();
+                    return redirect()->back()->with('error', 'Stok barang "' . ($barang->nama_barang ?? 'ID:'.$id) . '" tidak mencukupi saat proses pembayaran. Transaksi dibatalkan.');
+                }
+
                 $barang->stok -= $item['jumlah'];
                 $barang->save();
 
                 Penjualan::create([
                     'barang_id' => $id,
                     'jumlah' => $item['jumlah'],
-                    'diskon' => $item['diskon'] ?? 0, 
+                    'diskon' => $item['diskon'] ?? 0,
                     'total_harga' => $item['total'],
                     'kode_transaksi' => $kodeTransaksi,
                     'nama_pelanggan' => $request->nama_pelanggan,
-                    'no_wa' => $request->no_wa,       
-                    'alamat' => $request->alamat,     
+                    'no_wa' => $request->no_wa,
+                    'alamat' => $request->alamat,
                     'metode_pembayaran' => $metodeFinal,
                     'uang_bayar' => $totalUangDibayar,
                     'uang_kembali' => $uangKembali,
-                    'sisa_piutang' => $sisaPiutang
+                    'sisa_piutang' => $sisaPiutang,
                 ]);
             }
+
+            DB::commit();
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return redirect()->back()->with('error', 'Terjadi kesalahan sistem saat memproses pembayaran. Transaksi dibatalkan. (' . $e->getMessage() . ')');
         }
+        // ---> AKHIR TRANSACTION <---
 
         session()->forget('keranjang');
-        
-        // ---> PASANG CCTV AUDIT LOG <---
+
+        // ---> AUDIT LOG <---
         if ($sisaPiutang > 0) {
             AuditLog::catat('Transaksi Kasir (Piutang/Split)', "Kasir memproses transaksi $kodeTransaksi sejumlah Rp " . number_format($totalBelanja, 0, ',', '.') . " (Sisa Piutang: Rp " . number_format($sisaPiutang, 0, ',', '.') . ")");
         } else {
@@ -178,7 +200,10 @@ class PenjualanController extends Controller
         }
         // -------------------------------
 
-        $pesanStatus = $sisaPiutang > 0 ? "Transaksi Berhasil Dicatat sebagai Piutang! Kurang: Rp " . number_format($sisaPiutang, 0, ',', '.') : "Pembayaran Berhasil Lunas!";
+        $pesanStatus = $sisaPiutang > 0
+            ? "Transaksi Berhasil Dicatat sebagai Piutang! Kurang: Rp " . number_format($sisaPiutang, 0, ',', '.')
+            : "Pembayaran Berhasil Lunas!";
+
         return redirect()->back()->with('success', $pesanStatus)->with('kode_transaksi', $kodeTransaksi);
     }
 
@@ -190,9 +215,10 @@ class PenjualanController extends Controller
             return abort(404, 'Transaksi tidak ditemukan');
         }
 
+        $transaksi = $penjualans->first();
         $totalBelanja = $penjualans->sum('total_harga');
 
-        return view('kasir.struk', compact('penjualans', 'kode', 'totalBelanja'));
+        return view('kasir.struk', compact('penjualans', 'transaksi', 'kode', 'totalBelanja'));
     }
 
     public function laporan(Request $request)
