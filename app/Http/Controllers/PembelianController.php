@@ -97,7 +97,7 @@ class PembelianController extends Controller
     // Menghapus data pembelian (opsional, mengembalikan stok jika dibatalkan)
     public function destroy($id)
     {
-        $pembelian = Pembelian::with('details')->findOrFail(id);
+        $pembelian = Pembelian::with('details')->findOrFail($id);
 
         DB::beginTransaction();
         try {
